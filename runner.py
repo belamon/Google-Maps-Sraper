@@ -8,8 +8,8 @@ CITIES = [
     
 ]
 
-KEYWORD = "rumah makan padang"
-TOTAL = 2
+KEYWORD = "pizza store"
+TOTAL = 5
 WAIT_SECONDS = 20 
 
 PYTHON_CMD = "python3"
@@ -22,5 +22,5 @@ for city in CITIES:
     print(f"Waiting {WAIT_SECONDS} seconds")
     time.sleep(WAIT_SECONDS)
 
-print("BITCH IM DONE")
+print("THE SCRAPING IS COMPLETE")
 
