@@ -6,6 +6,7 @@ import os #file system helpers (to check folder is exists, join paths and make d
 import sys #system features 
 import re #regular expression to detect email patterns in HTML
 from urllib.parse import unquote #to encode url-encoded strings 
+from cleaner import normalize_row
 
 
 @dataclass
@@ -15,10 +16,13 @@ class Business:
     search_keyword:str = None
     recipient_contact_name:str= None
     recipient_company:str = None 
-    recipient_line_1:str = None 
-    recipient_line_2:str = None
+    recipient_line_address:str = None 
     recipient_email:str = None
-    city :str=None
+    geo_location :str=None
+    city:str = None
+    state:str = None
+    post_code:str = None
+    country:str = None
     recipient_phone_number :str = None
     website :str = None 
     source :str = "Google Map"
@@ -34,19 +38,16 @@ class BusinessList:
     def dataframe(self):
         """Convert business_list to pandas datafram
         """
-        return pd.json_normalize(
-        (asdict(business)for business in self.business_list), sep="_"
-        )
-    def save_to_excel(self, filename:str):
-        """Save pandas dataframe to excel (xlsx) file
-
-        Args:
-            filename (str): _description_
-        """
-        if not os.path.exists(self.save_at):
-            os.makedirs(self.save_at)
-        self.dataframe().to_excel(f"{self.save_at}/{filename}.xlsx", index= False)
-
+        rows = (normalize_row(asdict(business)) for business in self.business_list)
+        df = pd.json_normalize(rows, sep="_")
+        if not df.empty:
+            dedupe_cols = [c for c in ("recipient_line_address", "recipient_email") if c in df.columns]
+            if dedupe_cols:
+                df = df.copy()
+                df[dedupe_cols] = df[dedupe_cols].fillna("")
+                df = df.drop_duplicates(subset=dedupe_cols, keep="first")
+        return df
+    
     def save_to_csv(self, filename:str):
         """Save the leads to csv
 
@@ -88,12 +89,17 @@ def extract_email_from_website(browser,url):
         pass
     return ""
 
+def scrape(search:str, total:int):
+    print(f"Scraping: {search} (limit:{total})")
+
 def main():
     #read search for arguments 
     parser = argparse.ArgumentParser() #create argument parses
     parser.add_argument("-s","--search", type=str) # example -s "pool builders Australia"
     parser.add_argument("-t","--total", type=int) #limit for how many listings to scrape 
     args = parser.parse_args() #parse teh CLI args into 'args'
+
+    scrape(args.search, args.total)
 
     #build search list 
     if args.search:
@@ -198,8 +204,8 @@ def main():
 
                     #xpath selectors
                     recipient_company_xpath= '//h1[contains(@class, "DUwDvf")]'
-                    recipient_line_1_xpath= '//button[@data-item-id="address"]//div[contains(@class,"fontBodyMedium")]'
-                    city_xpath= '//button[@data-item-id="oloc"]//div[contains(@class,"fontBodyMedium")]'
+                    recipient_line_address= '//button[@data-item-id="address"]//div[contains(@class,"fontBodyMedium")]'
+                    geo_xpath= '//button[@data-item-id="oloc"]//div[contains(@class,"fontBodyMedium")]'
                     recipient_phone_number_xpath= '//button[starts-with(@data-item-id,"phone:tel")]//div[contains(@class,"fontBodyMedium")]'
                     website_xpath= '//a[@data-item-id="authority"]//div[contains(@class, "fontBodyMedium")]'
                     
@@ -213,18 +219,28 @@ def main():
                         business.recipient_company=loc.first.inner_text().strip()
                     else:
                         business.recipient_company=""
-                    address_nodes = page.locator(recipient_line_1_xpath)
+                    address_nodes = page.locator(recipient_line_address)
                     if address_nodes.count() >0:
                         texts = [node.inner_text().strip() for node in address_nodes.all()]
-                        business.recipient_line_1 = texts[0] if len(texts) >=1 else ""
-                        business.recipient_line_2 = texts[1] if len(texts) >=2 else ""
+                        business.recipient_line_address = texts[0] if len(texts) >=1 else ""
                     else:
-                        business.recipient_line_1 = ""
-                        business.recipient_line_2 = ""
-                    if page.locator(city_xpath).count() >0:
-                        business.city = page.locator(city_xpath).all()[0].inner_text()
+                        business.recipient_line_address = ""
+                    address_text = texts[0] if texts else ""
+                    business.recipient_line_address = address_text
+                    parts = [p.strip() for p in address_text.split(",") if p.strip()]
+                    if parts:
+                        business.country = parts[-1]
+                    if len(parts) >= 2:
+                        state_post = parts[-2].split()
+                        business.state = state_post[0]
+                        if len(state_post) > 1:
+                            business.post_code = state_post[1]
+                    if len(parts) >= 3:
+                        business.city = parts[-3]
+                    if page.locator(geo_xpath).count() >0:
+                        business.geo_location = page.locator(geo_xpath).all()[0].inner_text()
                     else:
-                        business.city = ""
+                        business.geo_location = ""
                     if page.locator(website_xpath).count() > 0:
                         business.website = page.locator(website_xpath).all()[0].inner_text()
                     else:
@@ -246,7 +262,6 @@ def main():
             #########
             # output
             #########
-            business_list.save_to_excel(f"google_maps_data_{search_for}".replace(' ', '_'))
             business_list.save_to_csv(f"google_maps_data_{search_for}".replace(' ', '_'))
 
         browser.close()
